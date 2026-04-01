@@ -47,10 +47,14 @@ public class ExtensionCustomLogic extends CallbackAdapter {
             return;
         }
 
-        String chatId = incomingMsg.getChat() != null ? incomingMsg.getChat().getId() : null;
+        if (incomingMsg.getChat() == null || incomingMsg.getFrom() == null) {
+            return;
+        }
+
+        String chatId = incomingMsg.getChat().getId();
         String text = incomingMsg.getText();
         String reference = Utils.getUniqueId();
-        String userId = incomingMsg.getFrom() != null ? incomingMsg.getFrom().getId() : null;
+        String userId = incomingMsg.getFrom().getId();
         String appId = incomingMsg.getAppId();
         Integer chatSettings = incomingMsg.getChatSettings();
 
@@ -68,17 +72,18 @@ public class ExtensionCustomLogic extends CallbackAdapter {
         }
 
         try {
-            if (equalsAnyIgnoreCase(trimmed, "/start", "start", "help", "/help")) {
+            if (equalsAnyIgnoreCase(trimmed, "/start", "start", "/help", "help")) {
                 String help = "Cairo Weather at Your Command\n\n" +
                         "Commands:\n" +
                         "- /weather : current weather for Cairo\n" +
                         "- /weather <city> : current weather for a city\n" +
-                        "- /forecast : 5-day forecast for Cairo (first 8 entries, 3-hour intervals)\n" +
-                        "- /forecast <city> : 5-day forecast for a city (first 8 entries)\n" +
-                        "\nExamples:\n" +
+                        "- /forecast : forecast for Cairo (first 8 entries, 3-hour intervals)\n" +
+                        "- /forecast <city> : forecast for a city (first 8 entries)\n\n" +
+                        "Examples:\n" +
                         "/weather\n" +
                         "/weather Giza\n" +
                         "/forecast Cairo\n";
+
                 api.sendText(chatId, help, reference, null, userId, 0, false, chatSettings, null, null, null, appId);
                 return;
             }
@@ -296,10 +301,10 @@ public class ExtensionCustomLogic extends CallbackAdapter {
             sb.append("- ").append(desc).append("\n");
         }
         if (temp != null) {
-            sb.append("- Temperature: ").append(format1(temp)).append(" °C\n");
+            sb.append("- Temperature: ").append(format1(temp)).append(" b0C\n");
         }
         if (feels != null) {
-            sb.append("- Feels like: ").append(format1(feels)).append(" °C\n");
+            sb.append("- Feels like: ").append(format1(feels)).append(" b0C\n");
         }
         if (humidity != null) {
             sb.append("- Humidity: ").append(humidity).append("%\n");
@@ -382,7 +387,7 @@ public class ExtensionCustomLogic extends CallbackAdapter {
             }
             boolean added = false;
             if (temp != null) {
-                sb.append(" | ").append(format1(temp)).append(" °C");
+                sb.append(" | ").append(format1(temp)).append(" b0C");
                 added = true;
             }
             if (humidity != null) {
