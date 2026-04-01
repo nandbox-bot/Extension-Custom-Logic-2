@@ -47,14 +47,12 @@ public class ExtensionCustomLogic extends CallbackAdapter {
             return;
         }
 
-        Chat chat = incomingMsg.getChat();
-        User from = incomingMsg.getFrom();
-        String chatId = (chat != null) ? chat.getId() : null;
-        String userId = (from != null) ? from.getId() : null;
-        String appId = incomingMsg.getAppId();
-        Integer chatSettings = incomingMsg.getChatSettings();
+        String chatId = incomingMsg.getChat() != null ? incomingMsg.getChat().getId() : null;
         String text = incomingMsg.getText();
         String reference = Utils.getUniqueId();
+        String userId = incomingMsg.getFrom() != null ? incomingMsg.getFrom().getId() : null;
+        String appId = incomingMsg.getAppId();
+        Integer chatSettings = incomingMsg.getChatSettings();
 
         if (chatId == null || userId == null || appId == null) {
             return;
@@ -75,8 +73,8 @@ public class ExtensionCustomLogic extends CallbackAdapter {
                         "Commands:\n" +
                         "- /weather : current weather for Cairo\n" +
                         "- /weather <city> : current weather for a city\n" +
-                        "- /forecast : 5-day forecast for Cairo (3-hour intervals)\n" +
-                        "- /forecast <city> : 5-day forecast for a city\n" +
+                        "- /forecast : 5-day forecast for Cairo (first 8 entries, 3-hour intervals)\n" +
+                        "- /forecast <city> : 5-day forecast for a city (first 8 entries)\n" +
                         "\nExamples:\n" +
                         "/weather\n" +
                         "/weather Giza\n" +
@@ -123,12 +121,12 @@ public class ExtensionCustomLogic extends CallbackAdapter {
         }
         Object type = obj.get("type");
         if (type != null) {
-            String t = String.valueOf(type);
-            if (t.toLowerCase().indexOf("message") >= 0) {
+            String t = String.valueOf(type).toLowerCase();
+            if (t.indexOf("message") >= 0 || t.indexOf("incoming") >= 0 || t.indexOf("chat") >= 0) {
                 return;
             }
         }
-        if (obj.containsKey("message") || obj.containsKey("incomingMessage") || obj.containsKey("text") || obj.containsKey("chat")) {
+        if (obj.get("message") != null || obj.get("incomingMessage") != null || obj.get("chat") != null || obj.get("text") != null) {
             return;
         }
     }
@@ -255,16 +253,18 @@ public class ExtensionCustomLogic extends CallbackAdapter {
         if (space < 0) {
             return "";
         }
-        String arg = t.substring(space + 1).trim();
-        return arg;
+        return t.substring(space + 1).trim();
     }
 
     private static String getCurrentWeatherText(String city) throws Exception {
         String encodedCity = urlEncode(city);
-        String endpoint = API_BASE_URL + "/data/2.5/weather?q=" + encodedCity + "&appid=" + API_KEY + "&units=metric";
+        String endpoint = API_BASE_URL + "/data/2.5/weather?q=" + encodedCity + "&appid=" + urlEncode(API_KEY) + "&units=metric";
         JSONObject json = httpGetJson(endpoint);
         if (json == null) {
             return "Could not fetch weather data right now.";
+        }
+        if (json.get("error") != null) {
+            return "Weather service error: " + String.valueOf(json.get("error"));
         }
 
         String name = asString(json.get("name"));
@@ -283,7 +283,7 @@ public class ExtensionCustomLogic extends CallbackAdapter {
         Integer humidity = asInt(main != null ? main.get("humidity") : null);
         Double windSpeed = asDouble(wind != null ? wind.get("speed") : null);
 
-        StringBuilder sb = new StringBuilder();
+        StringBuffer sb = new StringBuffer();
         sb.append("Current weather");
         if (name != null && name.length() > 0) {
             sb.append(" in ").append(name);
@@ -308,15 +308,22 @@ public class ExtensionCustomLogic extends CallbackAdapter {
             sb.append("- Wind: ").append(format1(windSpeed)).append(" m/s\n");
         }
 
-        return sb.toString().trim();
+        String out = sb.toString().trim();
+        if (out.length() == 0) {
+            return "Weather data is currently unavailable.";
+        }
+        return out;
     }
 
     private static String getForecastText(String city) throws Exception {
         String encodedCity = urlEncode(city);
-        String endpoint = API_BASE_URL + "/data/2.5/forecast?q=" + encodedCity + "&appid=" + API_KEY + "&units=metric";
+        String endpoint = API_BASE_URL + "/data/2.5/forecast?q=" + encodedCity + "&appid=" + urlEncode(API_KEY) + "&units=metric";
         JSONObject json = httpGetJson(endpoint);
         if (json == null) {
             return "Could not fetch forecast data right now.";
+        }
+        if (json.get("error") != null) {
+            return "Weather service error: " + String.valueOf(json.get("error"));
         }
 
         JSONObject cityObj = asObject(json.get("city"));
@@ -328,7 +335,7 @@ public class ExtensionCustomLogic extends CallbackAdapter {
             return "No forecast data available.";
         }
 
-        StringBuilder sb = new StringBuilder();
+        StringBuffer sb = new StringBuffer();
         sb.append("Forecast");
         if (name != null && name.length() > 0) {
             sb.append(" for ").append(name);
@@ -418,23 +425,30 @@ public class ExtensionCustomLogic extends CallbackAdapter {
 
             JSONParser parser = new JSONParser(JSONParser.MODE_PERMISSIVE);
             Object parsed = parser.parse(body);
-            if (parsed instanceof JSONObject) {
-                JSONObject obj = (JSONObject) parsed;
-                if (code >= 200 && code < 300) {
-                    return obj;
-                }
-                Object msg = obj.get("message");
-                if (msg != null) {
-                    JSONObject err = new JSONObject();
-                    err.put("error", String.valueOf(msg));
-                    return err;
-                }
+            if (!(parsed instanceof JSONObject)) {
+                return null;
+            }
+
+            JSONObject obj = (JSONObject) parsed;
+            if (code >= 200 && code < 300) {
                 return obj;
             }
-            return null;
+
+            Object msg = obj.get("message");
+            if (msg != null) {
+                JSONObject err = new JSONObject();
+                err.put("error", String.valueOf(msg));
+                return err;
+            }
+            JSONObject err2 = new JSONObject();
+            err2.put("error", "HTTP " + code);
+            return err2;
         } finally {
             if (is != null) {
-                try { is.close(); } catch (IOException ignored) {}
+                try {
+                    is.close();
+                } catch (IOException ignored) {
+                }
             }
             if (conn != null) {
                 conn.disconnect();
@@ -524,7 +538,7 @@ public class ExtensionCustomLogic extends CallbackAdapter {
         if (t.length() == 1) {
             return String.valueOf(up);
         }
-        return up + t.substring(1);
+        return String.valueOf(up) + t.substring(1);
     }
 
     private static String format1(Double d) {
