@@ -46,7 +46,6 @@ public class ExtensionCustomLogic extends CallbackAdapter {
         if (incomingMsg == null || api == null) {
             return;
         }
-
         if (incomingMsg.getChat() == null || incomingMsg.getFrom() == null) {
             return;
         }
@@ -61,7 +60,6 @@ public class ExtensionCustomLogic extends CallbackAdapter {
         if (chatId == null || userId == null || appId == null) {
             return;
         }
-
         if (text == null) {
             return;
         }
@@ -301,10 +299,10 @@ public class ExtensionCustomLogic extends CallbackAdapter {
             sb.append("- ").append(desc).append("\n");
         }
         if (temp != null) {
-            sb.append("- Temperature: ").append(format1(temp)).append(" b0C\n");
+            sb.append("- Temperature: ").append(format1(temp)).append(" \u00B0C\n");
         }
         if (feels != null) {
-            sb.append("- Feels like: ").append(format1(feels)).append(" b0C\n");
+            sb.append("- Feels like: ").append(format1(feels)).append(" \u00B0C\n");
         }
         if (humidity != null) {
             sb.append("- Humidity: ").append(humidity).append("%\n");
@@ -387,7 +385,7 @@ public class ExtensionCustomLogic extends CallbackAdapter {
             }
             boolean added = false;
             if (temp != null) {
-                sb.append(" | ").append(format1(temp)).append(" b0C");
+                sb.append(" | ").append(format1(temp)).append(" \u00B0C");
                 added = true;
             }
             if (humidity != null) {
