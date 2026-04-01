@@ -80,7 +80,8 @@ public class ExtensionCustomLogic extends CallbackAdapter {
                         "Examples:\n" +
                         "/weather\n" +
                         "/weather Giza\n" +
-                        "/forecast Cairo\n";
+                        "/forecast Cairo\n" +
+                        "\nCode is ready for deployment.";
 
                 api.sendText(chatId, help, reference, null, userId, 0, false, chatSettings, null, null, null, appId);
                 return;
