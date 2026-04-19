@@ -22,23 +22,77 @@ import java.io.UnsupportedEncodingException;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
+import java.util.Locale;
+import java.util.Properties;
 
 public class ExtensionCustomLogic extends CallbackAdapter {
     private Nandbox.Api api;
 
     private static final String DEFAULT_CITY = "Cairo";
-    private static final String API_BASE_URL = "https://api.openweathermap.org";
-    private static final String API_KEY = "921fa338a9960aa7629daff7765c5505";
+    private static final String OPENWEATHER_ENDPOINT = "https://api.openweathermap.org/data/2.5/weather";
+    private static final String DEFAULT_UNITS = "metric";
+
+    private String openWeatherApiKey;
 
     public static void main(String[] args) throws Exception {
-        String TOKEN = "12345678901234567890";
+        String TOKEN = getRequiredToken(args);
         NandboxClient client = NandboxClient.get();
         client.connect(TOKEN, new ExtensionCustomLogic());
+    }
+
+    private static String getRequiredToken(String[] args) throws Exception {
+        if (args != null && args.length > 0 && args[0] != null && args[0].trim().length() > 0) {
+            return args[0].trim();
+        }
+        String env = System.getenv("NANDBOX_TOKEN");
+        if (env != null && env.trim().length() > 0) {
+            return env.trim();
+        }
+        Properties p = new Properties();
+        InputStream in = null;
+        try {
+            in = new FileInputStream("bot.properties");
+            p.load(in);
+            String t = p.getProperty("TOKEN");
+            if (t != null && t.trim().length() > 0) {
+                return t.trim();
+            }
+        } catch (IOException e) {
+        } finally {
+            if (in != null) {
+                try { in.close(); } catch (IOException e2) {}
+            }
+        }
+        throw new Exception("Missing bot token. Provide as first argument, or set NANDBOX_TOKEN, or add bot.properties with TOKEN=<your_token>.");
     }
 
     @Override
     public void onConnect(Nandbox.Api api) {
         this.api = api;
+        this.openWeatherApiKey = loadOpenWeatherApiKey();
+    }
+
+    private String loadOpenWeatherApiKey() {
+        String env = System.getenv("OPENWEATHER_API_KEY");
+        if (env != null && env.trim().length() > 0) {
+            return env.trim();
+        }
+        Properties p = new Properties();
+        InputStream in = null;
+        try {
+            in = new FileInputStream("bot.properties");
+            p.load(in);
+            String k = p.getProperty("OPENWEATHER_API_KEY");
+            if (k != null && k.trim().length() > 0) {
+                return k.trim();
+            }
+        } catch (IOException e) {
+        } finally {
+            if (in != null) {
+                try { in.close(); } catch (IOException e2) {}
+            }
+        }
+        return null;
     }
 
     @Override
@@ -46,92 +100,362 @@ public class ExtensionCustomLogic extends CallbackAdapter {
         if (incomingMsg == null || api == null) {
             return;
         }
-        if (incomingMsg.getChat() == null || incomingMsg.getFrom() == null) {
-            return;
-        }
 
-        String chatId = incomingMsg.getChat().getId();
+        String chatId = incomingMsg.getChat() != null ? incomingMsg.getChat().getId() : null;
         String text = incomingMsg.getText();
         String reference = Utils.getUniqueId();
-        String userId = incomingMsg.getFrom().getId();
+        String userId = incomingMsg.getFrom() != null ? incomingMsg.getFrom().getId() : null;
         String appId = incomingMsg.getAppId();
         Integer chatSettings = incomingMsg.getChatSettings();
 
         if (chatId == null || userId == null || appId == null) {
             return;
         }
-        if (text == null) {
+
+        String cleaned = text == null ? "" : text.trim();
+        if (cleaned.length() == 0) {
+            sendText(chatId, "Type /weather to get the current Cairo weather. Example: /weather or /weather Cairo", reference, userId, chatSettings, appId);
             return;
         }
 
-        String trimmed = text.trim();
-        if (trimmed.length() == 0) {
+        String lower = cleaned.toLowerCase(Locale.ENGLISH);
+
+        if (lower.equals("/start") || lower.equals("start") || lower.equals("help") || lower.equals("/help")) {
+            String help = "Your Cairo Weather Companion!\n\nCommands:\n" +
+                    "/weather  - current weather in Cairo\n" +
+                    "/weather <city> - current weather for a city\n" +
+                    "/ping - health check";
+            sendText(chatId, help, reference, userId, chatSettings, appId);
             return;
         }
 
-        try {
-            if (equalsAnyIgnoreCase(trimmed, "/start", "start", "/help", "help")) {
-                String help = "Cairo Weather at Your Command\n\n" +
-                        "Commands:\n" +
-                        "- /weather : current weather for Cairo\n" +
-                        "- /weather <city> : current weather for a city\n" +
-                        "- /forecast : forecast for Cairo (first 8 entries, 3-hour intervals)\n" +
-                        "- /forecast <city> : forecast for a city (first 8 entries)\n\n" +
-                        "Examples:\n" +
-                        "/weather\n" +
-                        "/weather Giza\n" +
-                        "/forecast Cairo\n" +
-                        "\nCode is ready for deployment.";
+        if (lower.equals("/ping") || lower.equals("ping")) {
+            sendText(chatId, "pong", reference, userId, chatSettings, appId);
+            return;
+        }
 
-                api.sendText(chatId, help, reference, null, userId, 0, false, chatSettings, null, null, null, appId);
+        if (lower.startsWith("/weather") || lower.startsWith("weather")) {
+            String city = extractCity(cleaned);
+            if (city == null || city.trim().length() == 0) {
+                city = DEFAULT_CITY;
+            }
+
+            if (openWeatherApiKey == null || openWeatherApiKey.trim().length() == 0) {
+                sendText(chatId,
+                        "Weather API key is not configured. Set environment variable OPENWEATHER_API_KEY or add bot.properties with OPENWEATHER_API_KEY=<your_key>.",
+                        reference, userId, chatSettings, appId);
                 return;
             }
 
-            if (startsWithCommand(trimmed, "/weather") || startsWithCommand(trimmed, "weather")) {
-                String city = extractArgument(trimmed);
-                if (city == null || city.length() == 0) {
-                    city = DEFAULT_CITY;
-                }
-                String responseText = getCurrentWeatherText(city);
-                api.sendText(chatId, responseText, reference, null, userId, 0, false, chatSettings, null, null, null, appId);
-                return;
-            }
-
-            if (startsWithCommand(trimmed, "/forecast") || startsWithCommand(trimmed, "forecast")) {
-                String city2 = extractArgument(trimmed);
-                if (city2 == null || city2.length() == 0) {
-                    city2 = DEFAULT_CITY;
-                }
-                String responseText2 = getForecastText(city2);
-                api.sendText(chatId, responseText2, reference, null, userId, 0, false, chatSettings, null, null, null, appId);
-                return;
-            }
-
-            String unknown = "Unknown command. Type /help for available commands.";
-            api.sendText(chatId, unknown, reference, null, userId, 0, false, chatSettings, null, null, null, appId);
-        } catch (Exception e) {
-            String err = "Sorry, something went wrong while fetching the weather.";
             try {
-                api.sendText(chatId, err, reference, null, userId, 0, false, chatSettings, null, null, null, appId);
-            } catch (Exception ignored) {
+                WeatherResult r = fetchCurrentWeather(city, openWeatherApiKey);
+                String msg = formatWeatherMessage(r);
+                sendText(chatId, msg, reference, userId, chatSettings, appId);
+            } catch (Exception ex) {
+                String safe = ex.getMessage() == null ? "Unknown error" : ex.getMessage();
+                sendText(chatId, "Unable to get weather right now: " + safe, reference, userId, chatSettings, appId);
+            }
+            return;
+        }
+
+        sendText(chatId, "Unknown command. Type /help", reference, userId, chatSettings, appId);
+    }
+
+    private void sendText(String chatId, String msg, String reference, String userId, Integer chatSettings, String appId) {
+        api.sendText(
+                chatId,
+                msg,
+                reference,
+                null,
+                userId,
+                0,
+                false,
+                chatSettings,
+                null,
+                null,
+                null,
+                appId
+        );
+    }
+
+    private String extractCity(String cleaned) {
+        String s = cleaned.trim();
+        if (s.length() == 0) return null;
+
+        String[] parts = splitBySpace(s);
+        if (parts.length == 0) return null;
+
+        String cmd = parts[0].toLowerCase(Locale.ENGLISH);
+        if (!(cmd.equals("/weather") || cmd.equals("weather"))) {
+            return null;
+        }
+        if (parts.length == 1) {
+            return DEFAULT_CITY;
+        }
+
+        StringBuilder sb = new StringBuilder();
+        for (int i = 1; i < parts.length; i++) {
+            if (parts[i] == null || parts[i].length() == 0) continue;
+            if (sb.length() > 0) sb.append(' ');
+            sb.append(parts[i]);
+        }
+        return sb.toString().trim();
+    }
+
+    private String[] splitBySpace(String s) {
+        int len = s.length();
+        java.util.ArrayList tokens = new java.util.ArrayList();
+        StringBuffer current = new StringBuffer();
+        boolean inToken = false;
+        for (int i = 0; i < len; i++) {
+            char c = s.charAt(i);
+            if (Character.isWhitespace(c)) {
+                if (inToken) {
+                    tokens.add(current.toString());
+                    current.setLength(0);
+                    inToken = false;
+                }
+            } else {
+                current.append(c);
+                inToken = true;
+            }
+        }
+        if (inToken) {
+            tokens.add(current.toString());
+        }
+        String[] arr = new String[tokens.size()];
+        for (int i = 0; i < tokens.size(); i++) {
+            arr[i] = (String) tokens.get(i);
+        }
+        return arr;
+    }
+
+    private WeatherResult fetchCurrentWeather(String city, String apiKey) throws Exception {
+        String q = urlEncode(city);
+        String u = OPENWEATHER_ENDPOINT + "?q=" + q + "&appid=" + urlEncode(apiKey) + "&units=" + urlEncode(DEFAULT_UNITS);
+
+        HttpURLConnection conn = null;
+        InputStream is = null;
+        try {
+            URL url = new URL(u);
+            conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(15000);
+            conn.setReadTimeout(20000);
+            conn.setRequestProperty("Accept", "application/json");
+
+            int status = conn.getResponseCode();
+            if (status >= 200 && status < 300) {
+                is = conn.getInputStream();
+            } else {
+                is = conn.getErrorStream();
+            }
+
+            String body = readAll(is);
+            if (status < 200 || status >= 300) {
+                String m = parseOpenWeatherError(body);
+                throw new Exception(m);
+            }
+
+            JSONParser parser = new JSONParser(JSONParser.MODE_PERMISSIVE);
+            Object parsed = parser.parse(body);
+            if (!(parsed instanceof JSONObject)) {
+                throw new Exception("Invalid response from weather service");
+            }
+            JSONObject obj = (JSONObject) parsed;
+
+            WeatherResult r = new WeatherResult();
+            r.requestedCity = city;
+            r.cityName = getString(obj, "name");
+
+            JSONObject sys = getObject(obj, "sys");
+            r.country = sys != null ? getString(sys, "country") : null;
+
+            JSONObject main = getObject(obj, "main");
+            r.temp = main != null ? getDouble(main, "temp") : null;
+            r.feelsLike = main != null ? getDouble(main, "feels_like") : null;
+            r.humidity = main != null ? getLong(main, "humidity") : null;
+
+            JSONObject wind = getObject(obj, "wind");
+            r.windSpeed = wind != null ? getDouble(wind, "speed") : null;
+
+            JSONArray weatherArr = getArray(obj, "weather");
+            if (weatherArr != null && weatherArr.size() > 0 && weatherArr.get(0) instanceof JSONObject) {
+                JSONObject w0 = (JSONObject) weatherArr.get(0);
+                r.description = getString(w0, "description");
+                r.condition = getString(w0, "main");
+            }
+
+            if (r.cityName == null || r.cityName.trim().length() == 0) {
+                r.cityName = city;
+            }
+
+            return r;
+        } finally {
+            if (is != null) {
+                try { is.close(); } catch (IOException e) {}
+            }
+            if (conn != null) {
+                conn.disconnect();
             }
         }
     }
 
+    private String parseOpenWeatherError(String body) {
+        if (body == null || body.trim().length() == 0) {
+            return "Weather service error";
+        }
+        try {
+            JSONParser parser = new JSONParser(JSONParser.MODE_PERMISSIVE);
+            Object parsed = parser.parse(body);
+            if (parsed instanceof JSONObject) {
+                JSONObject obj = (JSONObject) parsed;
+                String msg = getString(obj, "message");
+                if (msg != null && msg.trim().length() > 0) {
+                    return "Weather service error: " + msg;
+                }
+            }
+        } catch (Exception e) {
+        }
+        String trimmed = body.trim();
+        if (trimmed.length() > 180) trimmed = trimmed.substring(0, 180);
+        return "Weather service error: " + trimmed;
+    }
+
+    private String formatWeatherMessage(WeatherResult r) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Weather for ");
+        sb.append(r.cityName != null ? r.cityName : r.requestedCity);
+        if (r.country != null && r.country.trim().length() > 0) {
+            sb.append(", ").append(r.country);
+        }
+        sb.append(":\n");
+
+        if (r.description != null && r.description.trim().length() > 0) {
+            sb.append("Condition: ").append(capitalize(r.description)).append("\n");
+        } else if (r.condition != null && r.condition.trim().length() > 0) {
+            sb.append("Condition: ").append(r.condition).append("\n");
+        }
+
+        if (r.temp != null) {
+            sb.append("Temperature: ").append(format1(r.temp)).append(" °C\n");
+        }
+        if (r.feelsLike != null) {
+            sb.append("Feels like: ").append(format1(r.feelsLike)).append(" °C\n");
+        }
+        if (r.humidity != null) {
+            sb.append("Humidity: ").append(r.humidity).append("%\n");
+        }
+        if (r.windSpeed != null) {
+            sb.append("Wind: ").append(format1(r.windSpeed)).append(" m/s\n");
+        }
+
+        return sb.toString().trim();
+    }
+
+    private String format1(Double d) {
+        if (d == null) return "";
+        double v = d.doubleValue();
+        long rounded = Math.round(v * 10.0);
+        double one = rounded / 10.0;
+        String s = String.valueOf(one);
+        if (s.endsWith(".0")) {
+            s = s.substring(0, s.length() - 2);
+        }
+        return s;
+    }
+
+    private String capitalize(String s) {
+        if (s == null) return null;
+        s = s.trim();
+        if (s.length() == 0) return s;
+        char first = s.charAt(0);
+        char up = Character.toUpperCase(first);
+        if (s.length() == 1) return String.valueOf(up);
+        return up + s.substring(1);
+    }
+
+    private String urlEncode(String s) throws UnsupportedEncodingException {
+        return URLEncoder.encode(s, "UTF-8");
+    }
+
+    private String readAll(InputStream is) throws IOException {
+        if (is == null) return "";
+        BufferedReader br = new BufferedReader(new InputStreamReader(is, "UTF-8"));
+        StringBuffer sb = new StringBuffer();
+        String line;
+        while ((line = br.readLine()) != null) {
+            sb.append(line);
+        }
+        return sb.toString();
+    }
+
+    private JSONObject getObject(JSONObject obj, String key) {
+        if (obj == null) return null;
+        Object v = obj.get(key);
+        if (v instanceof JSONObject) return (JSONObject) v;
+        return null;
+    }
+
+    private JSONArray getArray(JSONObject obj, String key) {
+        if (obj == null) return null;
+        Object v = obj.get(key);
+        if (v instanceof JSONArray) return (JSONArray) v;
+        return null;
+    }
+
+    private String getString(JSONObject obj, String key) {
+        if (obj == null) return null;
+        Object v = obj.get(key);
+        return v == null ? null : String.valueOf(v);
+    }
+
+    private Double getDouble(JSONObject obj, String key) {
+        if (obj == null) return null;
+        Object v = obj.get(key);
+        if (v == null) return null;
+        if (v instanceof Number) return new Double(((Number) v).doubleValue());
+        try {
+            return new Double(Double.parseDouble(String.valueOf(v)));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private Long getLong(JSONObject obj, String key) {
+        if (obj == null) return null;
+        Object v = obj.get(key);
+        if (v == null) return null;
+        if (v instanceof Number) return new Long(((Number) v).longValue());
+        try {
+            return new Long(Long.parseLong(String.valueOf(v)));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static class WeatherResult {
+        String requestedCity;
+        String cityName;
+        String country;
+        String condition;
+        String description;
+        Double temp;
+        Double feelsLike;
+        Long humidity;
+        Double windSpeed;
+    }
+
     @Override
     public void onReceive(JSONObject obj) {
-        if (obj == null) {
-            return;
-        }
-        Object type = obj.get("type");
-        if (type != null) {
-            String t = String.valueOf(type).toLowerCase();
-            if (t.indexOf("message") >= 0 || t.indexOf("incoming") >= 0 || t.indexOf("chat") >= 0) {
+        if (obj != null) {
+            Object t = obj.get("type");
+            if (t != null && String.valueOf(t).toLowerCase(Locale.ENGLISH).indexOf("message") >= 0) {
                 return;
             }
-        }
-        if (obj.get("message") != null || obj.get("incomingMessage") != null || obj.get("chat") != null || obj.get("text") != null) {
-            return;
+            if (obj.get("message") != null || obj.get("chat") != null || obj.get("from") != null) {
+                return;
+            }
         }
     }
 
@@ -221,338 +545,4 @@ public class ExtensionCustomLogic extends CallbackAdapter {
 
     @Override
     public void onMenuCallBack(MenuCallback menuCallback) {}
-
-    private static boolean equalsAnyIgnoreCase(String s, String a, String b, String c, String d) {
-        if (s == null) {
-            return false;
-        }
-        return s.equalsIgnoreCase(a) || s.equalsIgnoreCase(b) || s.equalsIgnoreCase(c) || s.equalsIgnoreCase(d);
-    }
-
-    private static boolean startsWithCommand(String text, String cmd) {
-        if (text == null || cmd == null) {
-            return false;
-        }
-        String t = text.trim();
-        String c = cmd.trim();
-        if (t.equalsIgnoreCase(c)) {
-            return true;
-        }
-        if (t.length() > c.length() && t.substring(0, c.length()).equalsIgnoreCase(c)) {
-            char next = t.charAt(c.length());
-            return next == ' ' || next == '\t' || next == '\n' || next == '\r';
-        }
-        return false;
-    }
-
-    private static String extractArgument(String text) {
-        if (text == null) {
-            return null;
-        }
-        String t = text.trim();
-        int space = t.indexOf(' ');
-        if (space < 0) {
-            space = t.indexOf('\t');
-        }
-        if (space < 0) {
-            return "";
-        }
-        return t.substring(space + 1).trim();
-    }
-
-    private static String getCurrentWeatherText(String city) throws Exception {
-        String encodedCity = urlEncode(city);
-        String endpoint = API_BASE_URL + "/data/2.5/weather?q=" + encodedCity + "&appid=" + urlEncode(API_KEY) + "&units=metric";
-        JSONObject json = httpGetJson(endpoint);
-        if (json == null) {
-            return "Could not fetch weather data right now.";
-        }
-        if (json.get("error") != null) {
-            return "Weather service error: " + String.valueOf(json.get("error"));
-        }
-
-        String name = asString(json.get("name"));
-        JSONObject main = asObject(json.get("main"));
-        JSONArray weatherArr = asArray(json.get("weather"));
-        JSONObject wind = asObject(json.get("wind"));
-
-        String desc = "";
-        if (weatherArr != null && weatherArr.size() > 0) {
-            JSONObject w0 = asObject(weatherArr.get(0));
-            desc = capitalize(asString(w0 != null ? w0.get("description") : null));
-        }
-
-        Double temp = asDouble(main != null ? main.get("temp") : null);
-        Double feels = asDouble(main != null ? main.get("feels_like") : null);
-        Integer humidity = asInt(main != null ? main.get("humidity") : null);
-        Double windSpeed = asDouble(wind != null ? wind.get("speed") : null);
-
-        StringBuffer sb = new StringBuffer();
-        sb.append("Current weather");
-        if (name != null && name.length() > 0) {
-            sb.append(" in ").append(name);
-        } else {
-            sb.append(" for ").append(city);
-        }
-        sb.append(":\n");
-
-        if (desc != null && desc.length() > 0) {
-            sb.append("- ").append(desc).append("\n");
-        }
-        if (temp != null) {
-            sb.append("- Temperature: ").append(format1(temp)).append(" \u00B0C\n");
-        }
-        if (feels != null) {
-            sb.append("- Feels like: ").append(format1(feels)).append(" \u00B0C\n");
-        }
-        if (humidity != null) {
-            sb.append("- Humidity: ").append(humidity).append("%\n");
-        }
-        if (windSpeed != null) {
-            sb.append("- Wind: ").append(format1(windSpeed)).append(" m/s\n");
-        }
-
-        String out = sb.toString().trim();
-        if (out.length() == 0) {
-            return "Weather data is currently unavailable.";
-        }
-        return out;
-    }
-
-    private static String getForecastText(String city) throws Exception {
-        String encodedCity = urlEncode(city);
-        String endpoint = API_BASE_URL + "/data/2.5/forecast?q=" + encodedCity + "&appid=" + urlEncode(API_KEY) + "&units=metric";
-        JSONObject json = httpGetJson(endpoint);
-        if (json == null) {
-            return "Could not fetch forecast data right now.";
-        }
-        if (json.get("error") != null) {
-            return "Weather service error: " + String.valueOf(json.get("error"));
-        }
-
-        JSONObject cityObj = asObject(json.get("city"));
-        String name = asString(cityObj != null ? cityObj.get("name") : null);
-        String country = asString(cityObj != null ? cityObj.get("country") : null);
-
-        JSONArray list = asArray(json.get("list"));
-        if (list == null || list.size() == 0) {
-            return "No forecast data available.";
-        }
-
-        StringBuffer sb = new StringBuffer();
-        sb.append("Forecast");
-        if (name != null && name.length() > 0) {
-            sb.append(" for ").append(name);
-            if (country != null && country.length() > 0) {
-                sb.append(", ").append(country);
-            }
-        } else {
-            sb.append(" for ").append(city);
-        }
-        sb.append(":\n");
-
-        int maxItems = list.size();
-        if (maxItems > 8) {
-            maxItems = 8;
-        }
-
-        for (int i = 0; i < maxItems; i++) {
-            JSONObject item = asObject(list.get(i));
-            if (item == null) {
-                continue;
-            }
-            String dtTxt = asString(item.get("dt_txt"));
-            JSONObject main = asObject(item.get("main"));
-            JSONArray weatherArr = asArray(item.get("weather"));
-            JSONObject wind = asObject(item.get("wind"));
-
-            Double temp = asDouble(main != null ? main.get("temp") : null);
-            Integer humidity = asInt(main != null ? main.get("humidity") : null);
-            Double windSpeed = asDouble(wind != null ? wind.get("speed") : null);
-
-            String desc = "";
-            if (weatherArr != null && weatherArr.size() > 0) {
-                JSONObject w0 = asObject(weatherArr.get(0));
-                desc = capitalize(asString(w0 != null ? w0.get("description") : null));
-            }
-
-            if (dtTxt == null || dtTxt.length() == 0) {
-                dtTxt = "Item " + (i + 1);
-            }
-
-            sb.append("- ").append(dtTxt);
-            if (desc != null && desc.length() > 0) {
-                sb.append(": ").append(desc);
-            }
-            boolean added = false;
-            if (temp != null) {
-                sb.append(" | ").append(format1(temp)).append(" \u00B0C");
-                added = true;
-            }
-            if (humidity != null) {
-                sb.append(added ? ", " : " | ");
-                sb.append("Humidity ").append(humidity).append("%");
-                added = true;
-            }
-            if (windSpeed != null) {
-                sb.append(added ? ", " : " | ");
-                sb.append("Wind ").append(format1(windSpeed)).append(" m/s");
-            }
-            sb.append("\n");
-        }
-
-        return sb.toString().trim();
-    }
-
-    private static JSONObject httpGetJson(String urlStr) throws Exception {
-        HttpURLConnection conn = null;
-        InputStream is = null;
-        try {
-            URL url = new URL(urlStr);
-            conn = (HttpURLConnection) url.openConnection();
-            conn.setRequestMethod("GET");
-            conn.setConnectTimeout(15000);
-            conn.setReadTimeout(15000);
-            conn.setRequestProperty("Accept", "application/json");
-
-            int code = conn.getResponseCode();
-            if (code >= 200 && code < 300) {
-                is = conn.getInputStream();
-            } else {
-                is = conn.getErrorStream();
-            }
-
-            String body = readAll(is);
-            if (body == null || body.trim().length() == 0) {
-                return null;
-            }
-
-            JSONParser parser = new JSONParser(JSONParser.MODE_PERMISSIVE);
-            Object parsed = parser.parse(body);
-            if (!(parsed instanceof JSONObject)) {
-                return null;
-            }
-
-            JSONObject obj = (JSONObject) parsed;
-            if (code >= 200 && code < 300) {
-                return obj;
-            }
-
-            Object msg = obj.get("message");
-            if (msg != null) {
-                JSONObject err = new JSONObject();
-                err.put("error", String.valueOf(msg));
-                return err;
-            }
-            JSONObject err2 = new JSONObject();
-            err2.put("error", "HTTP " + code);
-            return err2;
-        } finally {
-            if (is != null) {
-                try {
-                    is.close();
-                } catch (IOException ignored) {
-                }
-            }
-            if (conn != null) {
-                conn.disconnect();
-            }
-        }
-    }
-
-    private static String readAll(InputStream is) throws IOException {
-        if (is == null) {
-            return null;
-        }
-        BufferedReader br = new BufferedReader(new InputStreamReader(is, "UTF-8"));
-        StringBuffer sb = new StringBuffer();
-        String line;
-        while ((line = br.readLine()) != null) {
-            sb.append(line);
-        }
-        return sb.toString();
-    }
-
-    private static String urlEncode(String s) throws UnsupportedEncodingException {
-        if (s == null) {
-            return "";
-        }
-        return URLEncoder.encode(s, "UTF-8");
-    }
-
-    private static JSONObject asObject(Object o) {
-        if (o instanceof JSONObject) {
-            return (JSONObject) o;
-        }
-        return null;
-    }
-
-    private static JSONArray asArray(Object o) {
-        if (o instanceof JSONArray) {
-            return (JSONArray) o;
-        }
-        return null;
-    }
-
-    private static String asString(Object o) {
-        if (o == null) {
-            return null;
-        }
-        return String.valueOf(o);
-    }
-
-    private static Double asDouble(Object o) {
-        if (o == null) {
-            return null;
-        }
-        if (o instanceof Number) {
-            return new Double(((Number) o).doubleValue());
-        }
-        try {
-            return new Double(Double.parseDouble(String.valueOf(o)));
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    private static Integer asInt(Object o) {
-        if (o == null) {
-            return null;
-        }
-        if (o instanceof Number) {
-            return new Integer(((Number) o).intValue());
-        }
-        try {
-            return new Integer(Integer.parseInt(String.valueOf(o)));
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    private static String capitalize(String s) {
-        if (s == null) {
-            return "";
-        }
-        String t = s.trim();
-        if (t.length() == 0) {
-            return "";
-        }
-        char first = t.charAt(0);
-        char up = Character.toUpperCase(first);
-        if (t.length() == 1) {
-            return String.valueOf(up);
-        }
-        return String.valueOf(up) + t.substring(1);
-    }
-
-    private static String format1(Double d) {
-        if (d == null) {
-            return "";
-        }
-        double v = d.doubleValue();
-        long scaled = Math.round(v * 10.0);
-        long whole = scaled / 10;
-        long frac = Math.abs(scaled % 10);
-        return String.valueOf(whole) + "." + String.valueOf(frac);
-    }
 }
